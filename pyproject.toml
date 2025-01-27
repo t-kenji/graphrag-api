@@ -1,0 +1,87 @@
+[project]
+name = "graphrag-api"
+version = "0.1.0"
+description = "Microsoft GraphRAG WebAPI for Dify"
+readme = "README.md"
+license-files = ["LICENSE"]
+keywords = ["graphrag"]
+authors = [
+    { name = "Takahashi Kenji", email = "protect.2501@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.7",
+    "graphrag>=1.2.0",
+    "uvicorn>=0.34.0",
+]
+
+[project.scripts]
+graphrag-api = "graphrag_api:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14.1",
+    "pytest>=8.3.4",
+    "ruff>=0.9.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "T201",
+    "COM812",
+    "ISC001",
+    "S104",
+]
+unfixable = [
+    "F401",
+    "F841",
+]
+pydocstyle.convention = "google"
+
+[tool.ruff.lint.pylint]
+max-args = 6
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "D",
+    "S101",
+    "N802",
+    "ARG",
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
