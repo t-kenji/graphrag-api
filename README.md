@@ -41,13 +41,13 @@ The API to the GraphRAG Search API is described below.
 
 **Request:**
 
-`GET /v1/search/local/{domain}`
+`GET /v1/search/{domain}/local`
 
 query:
 > Who is Scrooge?
 
 ```sh
-curl http://localhost:3080/v1/search/local/xmascarol?query=Who%20is%20Scrooge%3F
+curl http://localhost:3080/v1/search/xmascarol/local?query=Who%20is%20Scrooge%3F
 ```
 
 **Response Body:**
@@ -60,13 +60,13 @@ curl http://localhost:3080/v1/search/local/xmascarol?query=Who%20is%20Scrooge%3F
 
 **Request:**
 
-`GET /v1/search/global/{domain}`
+`GET /v1/search/{domain}/global`
 
 query:
 > A theme of Xmas Carol?
 
 ```sh
-curl http://localhost:3080/v1/search/global/xmascarol?query=What%20theme%20of%20Xmas%20Carol%3F
+curl http://localhost:3080/v1/search/xmascarol/global?query=What%20theme%20of%20Xmas%20Carol%3F
 ```
 
 **Response Body:**
@@ -79,13 +79,13 @@ curl http://localhost:3080/v1/search/global/xmascarol?query=What%20theme%20of%20
 
 **Request:**
 
-`GET /v1/search/drift/{domain}`
+`GET /v1/search/{domain}/drift`
 
 query:
 > Who are the main characters in A Christmas Carol
 
 ```sh
-curl http://localhost:3080/v1/search/drift/xmascarol?query=Who%20are%20the%20main%20characters%20in%20A%20Christmas%20Carol
+curl http://localhost:3080/v1/search/xmascarol/drift?query=Who%20are%20the%20main%20characters%20in%20A%20Christmas%20Carol
 ```
 
 **Response Body:**
@@ -98,13 +98,13 @@ curl http://localhost:3080/v1/search/drift/xmascarol?query=Who%20are%20the%20mai
 
 **Request:**
 
-`GET /v1/search/basic/{domain}`
+`GET /v1/search/{domain}/basic`
 
 query:
 > Who wrote A Xmas Carol?
 
 ```sh
-curl http://localhost:3080/v1/search/basic/xmascarol?query=Who%20wrote%20A%20Xmas%20Carol%3F
+curl http://localhost:3080/v1/search/xmascarol/basic?query=Who%20wrote%20A%20Xmas%20Carol%3F
 ```
 
 **Response Body:**
