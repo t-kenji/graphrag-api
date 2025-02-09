@@ -94,12 +94,12 @@ text_embeder = OpenAIEmbedding(
 token_encoder = tiktoken.get_encoding("cl100k_base")
 
 
-def read_parquet(path: Path) -> pd.DataFrame | None:
+def _read_parquet(path: Path) -> pd.DataFrame | None:
     """Read parquet data frame file."""
     return pd.read_parquet(path) if path.is_file() else None
 
 
-def tostring(x: any) -> str:
+def _tostring(x: any) -> str:
     """Response data to string."""
     return json.dumps(x) if isinstance(x, dict | list) else str(x)
 
@@ -111,13 +111,13 @@ async def local_search_v1(
     """Search query for local context."""
     try:
         root_path = Path(f"{config.GRAPHRAG_ROOT_DIR}/{domain}").resolve()
-        final_nodes = read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
-        final_entities = read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
-        final_community_reports = read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
-        final_relationships = read_parquet(root_path / "output/create_final_relationships.parquet") # TODO: Memoizeする
-        final_covariates = read_parquet(root_path / "output/create_final_covariates.parquet") # TODO: Memoizeする
-        final_text_units = read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
-        entities = read_indexer_entities(final_nodes, final_entities, 2) # TODO: Memoizeする
+        final_nodes = _read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
+        final_entities = _read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
+        final_community_reports = _read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
+        final_relationships = _read_parquet(root_path / "output/create_final_relationships.parquet") # TODO: Memoizeする
+        final_covariates = _read_parquet(root_path / "output/create_final_covariates.parquet") # TODO: Memoizeする
+        final_text_units = _read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
+        entities = read_indexer_entities(final_nodes, final_entities, None) # TODO: Memoizeする
         relationships = read_indexer_relationships(final_relationships) # TODO: メモライスする
         claims = read_indexer_covariates(final_covariates) if final_covariates is not None else [] # TODO: Memoizeする
         community_reports = read_indexer_reports(final_community_reports, final_nodes, 2) # TODO: Memoizeする
@@ -140,7 +140,7 @@ async def local_search_v1(
             context_builder=context_builder,
             token_encoder=token_encoder,
             llm_params={
-                "max_tokens": 512,
+                "max_tokens": 2000,
                 "temperature": 0.0,
             },
             context_builder_params={
@@ -155,14 +155,14 @@ async def local_search_v1(
                 "include_community_rank": False,
                 "return_candidate_context": False,
                 "embedding_vectorstore_key": EntityVectorStoreKey.ID,
-                "max_tokens": 512,
+                "max_tokens": 2000,
             },
             response_type="single paragraph",
         )
         result = await searcher.asearch(query)
         return JSONResponse(
             content={
-                "result": tostring(result.response),
+                "result": _tostring(result.response),
                 "query": query,
             }
         )
@@ -177,10 +177,10 @@ async def global_search_v1(
     """Search query for global context."""
     try:
         root_path = Path(f"{config.GRAPHRAG_ROOT_DIR}/{domain}").resolve()
-        final_nodes = read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
-        final_entities = read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
-        final_community_reports = read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
-        final_communities = read_parquet(root_path / "output/create_final_communities.parquet") # TODO: Memoizeする
+        final_nodes = _read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
+        final_entities = _read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
+        final_community_reports = _read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
+        final_communities = _read_parquet(root_path / "output/create_final_communities.parquet") # TODO: Memoizeする
         entities = read_indexer_entities(final_nodes, final_entities, 2) # TODO: Memoizeする
         community_reports = read_indexer_reports(final_community_reports, final_nodes, 2) # TODO: Memoizeする
         communities = read_indexer_communities(final_communities, final_nodes, final_community_reports) # TODO: Memoizeする
@@ -222,7 +222,7 @@ async def global_search_v1(
             concurrent_coroutines=2,
         )
         result = await searcher.asearch(query)
-        return JSONResponse(content={"result": tostring(result.response), "query": query})
+        return JSONResponse(content={"result": _tostring(result.response), "query": query})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -234,11 +234,11 @@ async def drift_search_v1(
     """Search query for drift context."""
     try:
         root_path = Path(f"{config.GRAPHRAG_ROOT_DIR}/{domain}").resolve()
-        final_nodes = read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
-        final_entities = read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
-        final_relationships = read_parquet(root_path / "output/create_final_relationships.parquet") # TODO: Memoizeする
-        final_community_reports = read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
-        final_text_units = read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
+        final_nodes = _read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
+        final_entities = _read_parquet(root_path / "output/create_final_entities.parquet") # TODO: Memoizeする
+        final_relationships = _read_parquet(root_path / "output/create_final_relationships.parquet") # TODO: Memoizeする
+        final_community_reports = _read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
+        final_text_units = _read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
         entities = read_indexer_entities(final_nodes, final_entities, 2) # TODO: Memoizeする
         relationships = read_indexer_relationships(final_relationships) # TODO: メモライスする
         community_reports = read_indexer_reports(final_community_reports, final_nodes, 2) # TODO: Memoizeする
@@ -274,7 +274,7 @@ async def drift_search_v1(
             token_encoder=token_encoder,
         )
         result = await engine.asearch(query=query)
-        return JSONResponse(content={"result": tostring(result.response), "query": query})
+        return JSONResponse(content={"result": _tostring(result.response), "query": query})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -286,9 +286,9 @@ async def basic_search_v1(
     """Search query for basic context."""
     try:
         root_path = Path(f"{config.GRAPHRAG_ROOT_DIR}/{domain}").resolve()
-        final_nodes = read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
-        final_community_reports = read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
-        final_text_units = read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
+        final_nodes = _read_parquet(root_path / "output/create_final_nodes.parquet") # TODO: Memoizeする
+        final_community_reports = _read_parquet(root_path / "output/create_final_community_reports.parquet") # TODO: Memoizeする
+        final_text_units = _read_parquet(root_path / "output/create_final_text_units.parquet") # TODO: メモライスする
         community_reports = read_indexer_reports(final_community_reports, final_nodes, 2) # TODO: Memoizeする
         text_units = read_indexer_text_units(final_text_units) # TODO: Memoizeする
         description_embedding_store = LanceDBVectorStore(collection_name="default-entity-description") # TODO: Memoizeする
@@ -309,7 +309,7 @@ async def basic_search_v1(
             token_encoder=token_encoder,
         )
         result = await engine.asearch(query=query)
-        return JSONResponse(content={"result": tostring(result.response), "query": query})
+        return JSONResponse(content={"result": _tostring(result.response), "query": query})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
