@@ -1,7 +1,2 @@
 GRAPHRAG_API_PORT = 3080
-GRAPHRAG_API_KEY = "<YOUR API KEY>"
-GRAPHRAG_LLM_API_BASE = "https://api.oepnai.com/v1"
-GRAPHRAG_LLM_MODEL = "gpt-4o"
-GRAPHRAG_EMBEDDING_API_BASE = "https://api.openai.com/v1"
-GRAPHRAG_EMBEDDING_MODEL = "text-embedding-3-large"
 GRAPHRAG_ROOT_DIR = "."
