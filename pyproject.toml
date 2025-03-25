@@ -18,7 +18,7 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.7",
-    "graphrag>=1.2.0",
+    "graphrag==1.2.0",
     "uvicorn>=0.34.0",
 ]
 
