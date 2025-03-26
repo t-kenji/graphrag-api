@@ -15,7 +15,6 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from graphrag.config.load_config import GraphRagConfig, load_config
-from graphrag.config.resolve_path import resolve_paths
 from graphrag.logger.print_progress import PrintProgressLogger
 from graphrag.query.factory import (
     get_basic_search_engine,
@@ -141,20 +140,18 @@ def _load_domain_config(domain: str) -> tuple[GraphRagConfig, Path]:
     """
     domain_root = Path(f"{app_config.GRAPHRAG_ROOT_DIR}/{domain}").resolve()
     domain_config = load_config(domain_root)
-    resolve_paths(domain_config)
-    output_dir = Path(domain_config.storage.base_dir)
+    output_dir = Path(domain_config.output.base_dir)
     return domain_config, output_dir
 
 
 def _load_parquets(output_dir: Path, wants: list[str]) -> dict[str, pd.DataFrame]:
     parquets = {
-        "nodes": "create_final_nodes.parquet",
-        "entities": "create_final_entities.parquet",
-        "community_reports": "create_final_community_reports.parquet",
-        "communities": "create_final_communities.parquet",
-        "relationships": "create_final_relationships.parquet",
-        "covariates": "create_final_covariates.parquet",
-        "text_units": "create_final_text_units.parquet",
+        "communities": "communities.parquet",
+        "community_reports": "community_reports.parquet",
+        "text_units": "text_units.parquet",
+        "relationships": "relationships.parquet",
+        "entities": "entities.parquet",
+        "covariates": "covariates.parquet",
     }
     data = DictDotNotation()
     for key in wants:
@@ -162,51 +159,14 @@ def _load_parquets(output_dir: Path, wants: list[str]) -> dict[str, pd.DataFrame
     return data
 
 
-def _load_local_search_data(domain: str) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
-    """Load common Parquet files for local search.
+def _load_search_data(domain: str, indexes: list[str]) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
+    """Load common Parquet files.
 
     Returns:
         tuple: (domain_config, output_dir, data dict)
     """
     config, output_dir = _load_domain_config(domain)
-    data = _load_parquets(output_dir,
-                          wants=["nodes", "entities", "community_reports", "relationships", "covariates", "text_units"])
-    return config, output_dir, data
-
-
-def _load_global_search_data(domain: str) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
-    """Load common Parquet files for global search.
-
-    Returns:
-        tuple: (domain_config, output_dir, data dict)
-    """
-    config, output_dir = _load_domain_config(domain)
-    data = _load_parquets(output_dir,
-                          wants=["nodes", "entities", "community_reports", "communities"])
-    return config, output_dir, data
-
-
-def _load_drift_search_data(domain: str) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
-    """Load common Parquet files for drift search.
-
-    Returns:
-        tuple: (domain_config, output_dir, data dict)
-    """
-    config, output_dir = _load_domain_config(domain)
-    data = _load_parquets(output_dir,
-                          wants=["nodes", "entities", "relationships", "community_reports", "text_units"])
-    return config, output_dir, data
-
-
-def _load_basic_search_data(domain: str) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
-    """Load common Parquet files for basic search.
-
-    Returns:
-        tuple: (domain_config, output_dir, data dict)
-    """
-    config, output_dir = _load_domain_config(domain)
-    data = _load_parquets(output_dir,
-                          wants=["nodes", "community_reports", "text_units"])
+    data = _load_parquets(output_dir, wants=indexes)
     return config, output_dir, data
 
 
@@ -242,7 +202,7 @@ def _load_full_content_embedding_store(output_dir: Path) -> LanceDBVectorStore:
 # -----------------------------------------------------------------------------
 
 @app.get("/v1/search/{domain}/local")
-async def local_search_v1(
+async def simple_local_search_v1(
     domain: str,
     query: Annotated[str, Query(description="Search query for local context")] = ...,
     community_level: Annotated[int, Query(
@@ -252,12 +212,14 @@ async def local_search_v1(
 ) -> SearchResponse:
     """Perform a local context search for a specified domain (GET)."""
     try:
-        config, output_dir, data = _load_local_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, community_level)
-        relationships = read_indexer_relationships(data.relationships)
-        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, community_level)
+        config, output_dir, data = _load_search_data(domain, [
+            "communities", "community_reports", "text_units", "relationships", "entities", "covariates"
+        ])
+        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
         text_units = read_indexer_text_units(data.text_units)
+        relationships = read_indexer_relationships(data.relationships)
+        entities = read_indexer_entities(data.entities, data.communities, community_level)
+        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
@@ -271,14 +233,14 @@ async def local_search_v1(
             response_type=response_type,
             description_embedding_store=description_embedding_store,
         )
-        result = await search_engine.asearch(query)
+        result = await search_engine.search(query)
         return SearchResponse(result=_tostring(result.response), query=query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/v1/search/{domain}/global")
-async def global_search_v1(
+async def simple_global_search_v1(
     domain: str,
     query: Annotated[str, Query(description="Search query for global context")] = ...,
     community_level: Annotated[int, Query(
@@ -288,26 +250,26 @@ async def global_search_v1(
 ) -> SearchResponse:
     """Perform a global context search for a specified domain (GET)."""
     try:
-        domain_config, _, data = _load_global_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, community_level)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, community_level)
-        communities = read_indexer_communities(data.communities, data.nodes, data.community_reports)
+        config, _, data = _load_search_data(domain, ["entities", "communities", "community_reports"])
+        entities = read_indexer_entities(data.entities, data.communities, community_level)
+        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
+        communities = read_indexer_communities(data.communities, data.community_reports)
 
         search_engine = get_global_search_engine(
-            config=domain_config,
+            config=config,
             reports=community_reports,
             entities=entities,
             communities=communities,
             response_type=response_type,
         )
-        result = await search_engine.asearch(query)
+        result = await search_engine.search(query)
         return SearchResponse(result=_tostring(result.response), query=query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/v1/search/{domain}/drift")
-async def drift_search_v1(
+async def simple_drift_search_v1(
     domain: str,
     query: Annotated[str, Query(description="Search query for drift context")] = ...,
     community_level: Annotated[int, Query(
@@ -317,10 +279,12 @@ async def drift_search_v1(
 ) -> SearchResponse:
     """Perform a drift context search for a specified domain (GET)."""
     try:
-        domain_config, output_dir, data = _load_drift_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, community_level)
+        config, output_dir, data = _load_search_data(domain, [
+            "communities", "community_reports", "text_units", "relationships", "entities"
+        ])
+        entities = read_indexer_entities(data.entities, data.communities, community_level)
         relationships = read_indexer_relationships(data.relationships)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, community_level)
+        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
         text_units = read_indexer_text_units(data.text_units)
 
         description_embedding_store = _load_description_embedding_store(output_dir)
@@ -329,7 +293,7 @@ async def drift_search_v1(
         read_indexer_report_embeddings(community_reports, full_content_embedding_store)
 
         search_engine = get_drift_search_engine(
-            config=domain_config,
+            config=config,
             reports=community_reports,
             text_units=text_units,
             entities=entities,
@@ -337,37 +301,30 @@ async def drift_search_v1(
             description_embedding_store=description_embedding_store,
             response_type=response_type,
         )
-        result = await search_engine.asearch(query=query)
+        result = await search_engine.search(query=query)
         return SearchResponse(result=_tostring(result.response), query=query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/v1/search/{domain}/basic")
-async def basic_search_v1(
+async def simple_basic_search_v1(
     domain: str,
     query: Annotated[str, Query(description="Search query for basic context")] = ...,
-    community_level: Annotated[int, Query(
-        description=("Community level in the Leiden hierarchy; higher values represent smaller communities.")
-    )] = 2,
 ) -> SearchResponse:
     """Perform a basic context search for a specified domain (GET)."""
     try:
-        domain_config, output_dir, data = _load_basic_search_data(domain)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, community_level)
+        domain_config, output_dir, data = _load_search_data(domain, ["text_units"])
         text_units = read_indexer_text_units(data.text_units)
 
         description_embedding_store = _load_description_embedding_store(output_dir)
-        full_content_embedding_store = _load_full_content_embedding_store(output_dir)
-        # Populate full-content embeddings.
-        read_indexer_report_embeddings(community_reports, full_content_embedding_store)
 
         search_engine = get_basic_search_engine(
             config=domain_config,
             text_units=text_units,
             text_unit_embeddings=description_embedding_store,
         )
-        result = await search_engine.asearch(query=query)
+        result = await search_engine.search(query=query)
         return SearchResponse(result=_tostring(result.response), query=query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -383,15 +340,17 @@ async def status() -> str:
 # -----------------------------------------------------------------------------
 
 @app.post("/v1/search/{domain}/local")
-async def local_search_post(domain: str, req: SearchRequest) -> SearchResponse:
+async def local_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a local context search (POST version)."""
     try:
-        config, output_dir, data = _load_local_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, req.community_level)
-        relationships = read_indexer_relationships(data.relationships)
-        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, req.community_level)
+        config, output_dir, data = _load_search_data(domain, [
+            "communities", "community_reports", "text_units", "relationships", "entities", "covariates"
+        ])
+        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
         text_units = read_indexer_text_units(data.text_units)
+        relationships = read_indexer_relationships(data.relationships)
+        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
+        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
@@ -405,20 +364,20 @@ async def local_search_post(domain: str, req: SearchRequest) -> SearchResponse:
             response_type=req.response_type,
             description_embedding_store=description_embedding_store,
         )
-        result = await search_engine.asearch(req.query)
+        result = await search_engine.search(req.query)
         return SearchResponse(result=_tostring(result.response), query=req.query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/v1/search/{domain}/global")
-async def global_search_post(domain: str, req: SearchRequest) -> SearchResponse:
+async def global_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a global context search (POST version)."""
     try:
-        config, _, data = _load_global_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, req.community_level)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, req.community_level)
-        communities = read_indexer_communities(data.communities, data.nodes, data.community_reports)
+        config, _, data = _load_search_data(domain, ["entities", "communities", "community_reports"])
+        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
+        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
+        communities = read_indexer_communities(data.communities, data.community_reports)
 
         search_engine = get_global_search_engine(
             config=config,
@@ -427,20 +386,22 @@ async def global_search_post(domain: str, req: SearchRequest) -> SearchResponse:
             communities=communities,
             response_type=req.response_type,
         )
-        result = await search_engine.asearch(req.query)
+        result = await search_engine.search(req.query)
         return SearchResponse(result=_tostring(result.response), query=req.query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/v1/search/{domain}/drift")
-async def drift_search_post(domain: str, req: SearchRequest) -> SearchResponse:
+async def drift_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a drift context search (POST version)."""
     try:
-        config, output_dir, data = _load_drift_search_data(domain)
-        entities = read_indexer_entities(data.nodes, data.entities, req.community_level)
+        config, output_dir, data = _load_search_data(domain, [
+            "communities", "community_reports", "text_units", "relationships", "entities"
+        ])
+        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
         relationships = read_indexer_relationships(data.relationships)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, req.community_level)
+        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
         text_units = read_indexer_text_units(data.text_units)
 
         description_embedding_store = _load_description_embedding_store(output_dir)
@@ -457,31 +418,27 @@ async def drift_search_post(domain: str, req: SearchRequest) -> SearchResponse:
             description_embedding_store=description_embedding_store,
             response_type=req.response_type,
         )
-        result = await search_engine.asearch(query=req.query)
+        result = await search_engine.search(query=req.query)
         return SearchResponse(result=_tostring(result.response), query=req.query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/v1/search/{domain}/basic")
-async def basic_search_post(domain: str, req: SearchRequest) -> SearchResponse:
+async def basic_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a basic context search (POST version)."""
     try:
-        config, output_dir, data = _load_basic_search_data(domain)
-        community_reports = read_indexer_reports(data.community_reports, data.nodes, req.community_level)
+        config, output_dir, data = _load_search_data(domain, ["text_units"])
         text_units = read_indexer_text_units(data.text_units)
 
         description_embedding_store = _load_description_embedding_store(output_dir)
-        full_content_embedding_store = _load_full_content_embedding_store(output_dir)
-        # Populate full-content embeddings.
-        read_indexer_report_embeddings(community_reports, full_content_embedding_store)
 
         search_engine = get_basic_search_engine(
             config=config,
             text_units=text_units,
             text_unit_embeddings=description_embedding_store,
         )
-        result = await search_engine.asearch(query=req.query)
+        result = await search_engine.search(query=req.query)
         return SearchResponse(result=_tostring(result.response), query=req.query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
