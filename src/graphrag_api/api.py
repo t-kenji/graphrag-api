@@ -6,16 +6,17 @@ Both GET and POST methods are supported.
 """
 
 import json
+import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import pandas as pd
 import tomllib
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from graphrag.config.load_config import GraphRagConfig, load_config
-from graphrag.logger.print_progress import PrintProgressLogger
+from graphrag.config.load_config import load_config
+from graphrag.config.models.graph_rag_config import GraphRagConfig
 from graphrag.query.factory import (
     get_basic_search_engine,
     get_drift_search_engine,
@@ -35,11 +36,16 @@ from graphrag.vector_stores.lancedb import LanceDBVectorStore
 from pydantic import BaseModel
 
 # Initialize logger instance.
-logger = PrintProgressLogger("")
+logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
-# Pydantic models for request/response
+# Pydantic models for configure/request/response
 # -----------------------------------------------------------------------------
+
+class APIConfigure(BaseModel):
+    """Graphrag-API configuration."""
+    GRAPHRAG_API_PORT: int
+    GRAPHRAG_ROOT_DIR: str
 
 class SearchRequest(BaseModel):
     """Request model for search endpoints."""
@@ -54,36 +60,16 @@ class SearchResponse(BaseModel):
     query: str
 
 # -----------------------------------------------------------------------------
-# Utility: Dictionary with attribute-style access.
-# -----------------------------------------------------------------------------
-
-class DictDotNotation(dict):
-    """Dictionary subclass that supports attribute-style access.
-
-    E.g., d = DictDotNotation({"a": 1}); print(d.a) -> 1.
-    """
-
-    def __init__(self, *args: list, **kwargs: dict) -> None:
-        """Initializer."""
-        super().__init__(*args, **kwargs)
-        self.__dict__ = self
-
-# -----------------------------------------------------------------------------
 # Default configuration
 # -----------------------------------------------------------------------------
 
-app_config = DictDotNotation({
-    "GRAPHRAG_API_PORT": 3080,
-    "GRAPHRAG_ROOT_DIR": ".",
-})
+app_config = APIConfigure(GRAPHRAG_API_PORT=3080, GRAPHRAG_ROOT_DIR=".")
 
 # Override default config if environ.toml exists.
 config_file = Path("environ.toml")
 if config_file.exists():
     with config_file.open("rb") as f:
-        for k, v in tomllib.load(f).items():
-            if k in app_config:
-                app_config[k] = v
+        app_config = APIConfigure.model_validate({**app_config.model_dump(), **tomllib.load(f)})
 
 # -----------------------------------------------------------------------------
 # FastAPI app initialization and CORS setup
@@ -103,7 +89,7 @@ app.add_middleware(
 # Helper functions for file loading and store initialization
 # -----------------------------------------------------------------------------
 
-def _read_parquet(path: Path) -> pd.DataFrame | None:
+def _read_parquet(path: Path) -> pd.DataFrame:
     """Read a Parquet file and return its DataFrame.
 
     Args:
@@ -112,10 +98,10 @@ def _read_parquet(path: Path) -> pd.DataFrame | None:
     Returns:
         pd.DataFrame | None: DataFrame if file exists, else None.
     """
-    return pd.read_parquet(path) if path.is_file() else None
+    return pd.read_parquet(path)
 
 
-def _tostring(x: any) -> str:
+def _tostring(x: Any) -> str:
     """Convert input data to a string representation.
 
     If input is a dict or list, return its JSON string; otherwise, use str().
@@ -146,17 +132,14 @@ def _load_domain_config(domain: str) -> tuple[GraphRagConfig, Path]:
 
 def _load_parquets(output_dir: Path, wants: list[str]) -> dict[str, pd.DataFrame]:
     parquets = {
-        "communities": "communities.parquet",
-        "community_reports": "community_reports.parquet",
-        "text_units": "text_units.parquet",
-        "relationships": "relationships.parquet",
-        "entities": "entities.parquet",
-        "covariates": "covariates.parquet",
+        "communities": output_dir / "communities.parquet",
+        "community_reports": output_dir / "community_reports.parquet",
+        "text_units": output_dir / "text_units.parquet",
+        "relationships": output_dir / "relationships.parquet",
+        "entities": output_dir / "entities.parquet",
+        "covariates": output_dir / "covariates.parquet",
     }
-    data = DictDotNotation()
-    for key in wants:
-        data[key] = _read_parquet(output_dir / parquets[key])
-    return data
+    return {k: _read_parquet(parquets[k]) for k in wants if parquets[k].is_file()}
 
 
 def _load_search_data(domain: str, indexes: list[str]) -> tuple[GraphRagConfig, Path, dict[str, pd.DataFrame]]:
@@ -204,7 +187,7 @@ def _load_full_content_embedding_store(output_dir: Path) -> LanceDBVectorStore:
 @app.get("/v1/search/{domain}/local")
 async def simple_local_search_v1(
     domain: str,
-    query: Annotated[str, Query(description="Search query for local context")] = ...,
+    query: Annotated[str, Query(description="Search query for local context")],
     community_level: Annotated[int, Query(
         description=("Community level in the Leiden hierarchy; higher values represent smaller communities.")
     )] = 2,
@@ -215,11 +198,11 @@ async def simple_local_search_v1(
         config, output_dir, data = _load_search_data(domain, [
             "communities", "community_reports", "text_units", "relationships", "entities", "covariates"
         ])
-        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
-        text_units = read_indexer_text_units(data.text_units)
-        relationships = read_indexer_relationships(data.relationships)
-        entities = read_indexer_entities(data.entities, data.communities, community_level)
-        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], community_level)
+        text_units = read_indexer_text_units(data["text_units"])
+        relationships = read_indexer_relationships(data["relationships"])
+        entities = read_indexer_entities(data["entities"], data["communities"], community_level)
+        claims = read_indexer_covariates(data["covariates"]) if "covariates" in data else []
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
@@ -242,7 +225,7 @@ async def simple_local_search_v1(
 @app.get("/v1/search/{domain}/global")
 async def simple_global_search_v1(
     domain: str,
-    query: Annotated[str, Query(description="Search query for global context")] = ...,
+    query: Annotated[str, Query(description="Search query for global context")],
     community_level: Annotated[int, Query(
         description=("Community level in the Leiden hierarchy; higher values represent smaller communities.")
     )] = 2,
@@ -251,9 +234,9 @@ async def simple_global_search_v1(
     """Perform a global context search for a specified domain (GET)."""
     try:
         config, _, data = _load_search_data(domain, ["entities", "communities", "community_reports"])
-        entities = read_indexer_entities(data.entities, data.communities, community_level)
-        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
-        communities = read_indexer_communities(data.communities, data.community_reports)
+        entities = read_indexer_entities(data["entities"], data["communities"], community_level)
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], community_level)
+        communities = read_indexer_communities(data["communities"], data["community_reports"])
 
         search_engine = get_global_search_engine(
             config=config,
@@ -271,7 +254,7 @@ async def simple_global_search_v1(
 @app.get("/v1/search/{domain}/drift")
 async def simple_drift_search_v1(
     domain: str,
-    query: Annotated[str, Query(description="Search query for drift context")] = ...,
+    query: Annotated[str, Query(description="Search query for drift context")],
     community_level: Annotated[int, Query(
         description=("Community level in the Leiden hierarchy; higher values represent smaller communities.")
     )] = 2,
@@ -282,10 +265,10 @@ async def simple_drift_search_v1(
         config, output_dir, data = _load_search_data(domain, [
             "communities", "community_reports", "text_units", "relationships", "entities"
         ])
-        entities = read_indexer_entities(data.entities, data.communities, community_level)
-        relationships = read_indexer_relationships(data.relationships)
-        community_reports = read_indexer_reports(data.community_reports, data.communities, community_level)
-        text_units = read_indexer_text_units(data.text_units)
+        entities = read_indexer_entities(data["entities"], data["communities"], community_level)
+        relationships = read_indexer_relationships(data["relationships"])
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], community_level)
+        text_units = read_indexer_text_units(data["text_units"])
 
         description_embedding_store = _load_description_embedding_store(output_dir)
         full_content_embedding_store = _load_full_content_embedding_store(output_dir)
@@ -310,12 +293,12 @@ async def simple_drift_search_v1(
 @app.get("/v1/search/{domain}/basic")
 async def simple_basic_search_v1(
     domain: str,
-    query: Annotated[str, Query(description="Search query for basic context")] = ...,
+    query: Annotated[str, Query(description="Search query for basic context")],
 ) -> SearchResponse:
     """Perform a basic context search for a specified domain (GET)."""
     try:
         domain_config, output_dir, data = _load_search_data(domain, ["text_units"])
-        text_units = read_indexer_text_units(data.text_units)
+        text_units = read_indexer_text_units(data["text_units"])
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
@@ -346,11 +329,11 @@ async def local_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
         config, output_dir, data = _load_search_data(domain, [
             "communities", "community_reports", "text_units", "relationships", "entities", "covariates"
         ])
-        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
-        text_units = read_indexer_text_units(data.text_units)
-        relationships = read_indexer_relationships(data.relationships)
-        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
-        claims = read_indexer_covariates(data.covariates) if data.covariates is not None else []
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], req.community_level)
+        text_units = read_indexer_text_units(data["text_units"])
+        relationships = read_indexer_relationships(data["relationships"])
+        entities = read_indexer_entities(data["entities"], data["communities"], req.community_level)
+        claims = read_indexer_covariates(data["covariates"]) if data["covariates"] is not None else []
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
@@ -375,9 +358,9 @@ async def global_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a global context search (POST version)."""
     try:
         config, _, data = _load_search_data(domain, ["entities", "communities", "community_reports"])
-        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
-        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
-        communities = read_indexer_communities(data.communities, data.community_reports)
+        entities = read_indexer_entities(data["entities"], data["communities"], req.community_level)
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], req.community_level)
+        communities = read_indexer_communities(data["communities"], data["community_reports"])
 
         search_engine = get_global_search_engine(
             config=config,
@@ -399,10 +382,10 @@ async def drift_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
         config, output_dir, data = _load_search_data(domain, [
             "communities", "community_reports", "text_units", "relationships", "entities"
         ])
-        entities = read_indexer_entities(data.entities, data.communities, req.community_level)
-        relationships = read_indexer_relationships(data.relationships)
-        community_reports = read_indexer_reports(data.community_reports, data.communities, req.community_level)
-        text_units = read_indexer_text_units(data.text_units)
+        entities = read_indexer_entities(data["entities"], data["communities"], req.community_level)
+        relationships = read_indexer_relationships(data["relationships"])
+        community_reports = read_indexer_reports(data["community_reports"], data["communities"], req.community_level)
+        text_units = read_indexer_text_units(data["text_units"])
 
         description_embedding_store = _load_description_embedding_store(output_dir)
         full_content_embedding_store = _load_full_content_embedding_store(output_dir)
@@ -429,7 +412,7 @@ async def basic_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
     """Perform a basic context search (POST version)."""
     try:
         config, output_dir, data = _load_search_data(domain, ["text_units"])
-        text_units = read_indexer_text_units(data.text_units)
+        text_units = read_indexer_text_units(data["text_units"])
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
