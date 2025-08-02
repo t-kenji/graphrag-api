@@ -333,7 +333,7 @@ async def local_search_v1(domain: str, req: SearchRequest) -> SearchResponse:
         text_units = read_indexer_text_units(data["text_units"])
         relationships = read_indexer_relationships(data["relationships"])
         entities = read_indexer_entities(data["entities"], data["communities"], req.community_level)
-        claims = read_indexer_covariates(data["covariates"]) if data["covariates"] is not None else []
+        claims = read_indexer_covariates(data["covariates"]) if "covariates" in data else []
 
         description_embedding_store = _load_description_embedding_store(output_dir)
 
